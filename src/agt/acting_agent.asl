@@ -4,18 +4,64 @@
 // that describes a Thing of type https://ci.mines-stetienne.fr/kg/ontology#PhantomX
 robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/tds/leubot1.ttl").
 
+/* Initial beliefs and rules */
+
+/* Reasoning rules */
+// Rule: Link roles to their ultimate goals via missions
+role_goal(R, G) :-
+   role_mission(R, _, M) & mission_goal(M, G).
+
+// Rule: Check if the agent has a plan for a specific goal
+can_achieve(G) :-
+   .relevant_plans({+!G[scheme(_)]}, LP) & LP \== [].
+
+// Rule: Determine if the agent is suitable for a role (can achieve ALL its goals)
+having_plan_for_role(R) :-
+   not (role_goal(R, G) & not can_achieve(G)). // Double negation as shown in the lecture
+/* End reasoning rules */
+
 /* Initial goals */
 !start. // the agent has the goal to start
 
 /* 
  * Plan for reacting to the addition of the goal !start
  * Triggering event: addition of goal !start
- * Context: the agent believes that it can manage a group and a scheme in an organization
- * Body: greets the user
+ * Context: true (the plan is always applicable)
+ * Body: announces the agent is active and ready
 */
 @start_plan
 +!start : true <-
-	.print("Hello world").
+	.print("Acting agent active").
+
+/* 
+ * Plan for handling direct role invitation
+ * This is used as a fallback if the organizational reasoning doesn't trigger
+ */
+@ask_fulfill_role_plan
++ask_fulfill_role(Role, GroupName, OrgName) : true <-
+    .print("Received direct invitation for role: ", Role, " in group: ", GroupName);
+    
+    joinWorkspace(OrgName);
+	lookupArtifact(OrgName, OrgArtId);
+	focus(OrgArtId);
+	lookupArtifact(GroupName, GroupArtId);
+	focus(GroupArtId);
+    
+    // Only adopt if we have a plan for this role
+    if (having_plan_for_role(Role)) {
+        .print("I can fulfill this role. Adopting role: ", Role);
+        adoptRole(Role);
+    } else {
+        .print("I am not suitable for role: ", Role);
+    }
+    .
+
+/* 
+ * Plan for receiving temperature broadcasts from the sensing agent
+ */
++temperature(Celsius) : true <-
+    .print("Received temperature reading: ", Celsius, "°C");
+    .
 
 /* 
  * Plan for reacting to the addition of the goal !manifest_temperature
@@ -54,6 +100,5 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
 /* Import behavior of agents that reason on MOISE organizations */
 { include("$moiseJar/asl/org-rules.asl") }
 
-/* Import behavior of agents that react to organizational events
-(if observing, i.e. being focused on the appropriate organization artifacts) */
+/* Import behavior of agents that react to organizational events */
 { include("inc/skills.asl") }

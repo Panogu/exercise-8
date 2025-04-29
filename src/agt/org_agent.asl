@@ -5,6 +5,13 @@ org_name("lab_monitoring_org"). // the agent beliefs that it can manage organiza
 group_name("monitoring_team"). // the agent beliefs that it can manage groups with the id "monitoring_team"
 sch_name("monitoring_scheme"). // the agent beliefs that it can manage schemes with the id "monitoring_scheme"
 
+/* Reasoning for agents in role count */
+has_enough_agents_for_role(R) :-
+  role_cardinality(R,Min,Max) &
+  .count(play(_,R,_),NP) &
+  NP >= Min.
+/* End reasoning for agents in role count */
+
 /* Initial goals */
 !start. // the agent has the goal to start
 
@@ -12,13 +19,40 @@ sch_name("monitoring_scheme"). // the agent beliefs that it can manage schemes w
  * Plan for reacting to the addition of the goal !start
  * Triggering event: addition of goal !start
  * Context: the agent believes that it can manage a group and a scheme in an organization
- * Body: greets the user
+ * Body: Implemented for task 1
 */
 @start_plan
 +!start : org_name(OrgName) & group_name(GroupName) & sch_name(SchemeName) <-
-  .print("Hello world").
 
-/* 
+  // Create and join the workspace
+  .println("Creating new workspace: ", OrgName);
+  createWorkspace(OrgName);
+  joinWorkspace(OrgName, WspID1);
+
+  // Make the organizational artifact
+  .println("Creating new organizational artifact... ");
+  makeArtifact(OrgName, "ora4mas.nopl.OrgBoard", ["src/org/org-spec.xml"], OrgBoardArtId)[wid(WspID1)];
+  focus(OrgBoardArtId)[wid(WspID1)];
+
+  // Create group and scheme boards
+  .println("Creating new group and scheme boards... ");
+  createGroup(GroupName, GroupName, GroupBoardArtId)[artifact_id(OrgBoardArtId)];
+  focus(GroupBoardArtId)[wid(WspID1)];
+  createScheme(SchemeName, SchemeName, SchemeBoardArtId)[artifact_id(OrgBoardArtId)];
+  focus(SchemeBoardArtId)[wid(WspID1)];
+
+  // Broadcast that a new organizational workspace is available
+  .broadcast(tell, org_created(OrgName));
+
+  // Inspect the Group and the Scheme
+  !inspect(GroupBoardArtId)[wid(WorkspaceId)];
+  !inspect(SchemeBoardArtId)[wid(WorkspaceId)];
+
+  // Create the test-goal ?formationStatus(ok) to check if the group has been well-formed (wait for it)
+  ?formationStatus(ok)[artifact_id(GroupBoardArtId)];
+  .
+
+  /* 
  * Plan for reacting to the addition of the test-goal ?formationStatus(ok)
  * Triggering event: addition of goal ?formationStatus(ok)
  * Context: the agent beliefs that there exists a group G whose formation status is being tested
@@ -28,7 +62,45 @@ sch_name("monitoring_scheme"). // the agent beliefs that it can manage schemes w
 @test_formation_status_is_ok_plan
 +?formationStatus(ok)[artifact_id(G)] : group(GroupName,_,G)[artifact_id(OrgName)] <-
   .print("Waiting for group ", GroupName," to become well-formed");
+  .wait(15000); // Wait 15 seconds to then actively complete the group formation
+  !actively_complete_group_formation(GroupName);
   .wait({+formationStatus(ok)[artifact_id(G)]}). // waits until the belief is added in the belief base
+
+/* Plan for adding the Scheme to the group board if the group is well-formed */
+@formation_status_is_ok_plan
++formationStatus(ok)[artifact_id(GroupBoardArtId)] : group(GroupName,_,GroupBoardArtId)[artifact_id(OrgName)] & scheme(SchemeName,SchemeType,SchemeBoardArtId) <-
+  .print("Group ", GroupName, " is well-formed for the scheme.");
+  addScheme(SchemeName)[artifact_id(GroupBoardArtId)];
+  .
+
+/* Plan for actively completing the group formation */
+@actively_complete_group_formation_plan
++!actively_complete_group_formation(GroupName) : formationStatus(nok) & group(GroupName,GroupType,GroupArtId) & org_name(OrgName) & specification(group_specification(GroupName,RolesList,_,_)) <-
+  .print("Group ", GroupName, " formation not completed after 15 seconds.");
+  .print("Actively completing group formation for group ", GroupName);
+  for (.member(Role,RolesList)) {
+    !check_role_filled(Role);
+  }
+  .wait(15000);
+  !actively_complete_group_formation(GroupName);
+  .
+
+@actively_complete_group_formation_plan_success
++!actively_complete_group_formation(GroupName) : formationStatus(ok) <-
+  .print("Group ", GroupName, " formation completed successfully.");
+  .
+
+/* Plan for checking missing agents in a role */
+@check_role_filled_plan
++!check_role_filled(role(Role,_,_,MinCard,MaxCard,_,_)) : not has_enough_agents_for_role(Role) & org_name(OrgName) & group_name(GroupName) <-
+  .print("Agents missing for role: ", Role);
+  .broadcast(tell, ask_fulfill_role(Role, GroupName, OrgName)).
+
+/* Default plan (enough agents) */
+@check_role_filled_plan_fail
++!check_role_filled(role(Role,_,_,MinCard,MaxCard,_,_)) : true <-
+  true
+  .
 
 /* 
  * Plan for reacting to the addition of the goal !inspect(OrganizationalArtifactId)
